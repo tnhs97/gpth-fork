@@ -5,7 +5,7 @@ set -e  # fail if generating sha fails or smth
 
 txt="# Maintainer: TheLastGimbus <mateusz.soszynski@tuta.io>
 pkgname=gpth-bin
-pkgver=$(grep -oP '(?<=version: ).*' pubspec.yaml)
+pkgver=$(sed -n 's/^version = "\([^"]*\)"$/\1/p' Cargo.toml)
 pkgrel=1
 pkgdesc='Tool to help you with exporting stuff from Google Photos'
 arch=('x86_64')

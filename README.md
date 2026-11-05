@@ -1,3 +1,32 @@
+# Google Photos Takeout Helper (Rust fork)
+
+This fork rewrites [TheLastGimbus's GooglePhotosTakeoutHelper](https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper) in Rust. It organizes extracted Google Photos exports, restores file timestamps, and preserves album membership.
+
+## Quick start
+
+Extract and merge all Google Takeout archives into one input folder. The command below requires Rust 1.89 or later.
+
+```sh
+cargo run --release --locked -- --input "Takeout" --output "organized" --copy
+```
+
+Use `--copy` to keep the source files. GPTH moves them by default. Run `cargo run --release --locked -- --help` for all options.
+
+## Changes from upstream
+
+The comparison uses the original project's [`master` at `a9de187`](https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper/tree/a9de187efd9ce7cd072c5803dabc45079d416e64).
+
+- `--flat` keeps all media directly in their output folders, including undated files. `--split-media` separates photos and videos into `ALL_PHOTOS` and `ALL_VIDEOS`.
+- Date recovery supports newer `.supplemental-metadata.json` sidecars, creation-time fallback, and Unix timestamps in filenames. Extensionless motion videos are detected by their headers and exported with an extension.
+- Deduplication streams full file hashes, so distinct large files of the same size stay separate. Move mode supports different drives by copying before removing the source.
+- Windows exports set both creation and modification times. Album shortcuts use native Windows APIs and support Unicode paths.
+- Interactive mode asks for folder paths in the terminal. Cargo handles builds and tests.
+
+<details>
+<summary>Original README by TheLastGimbus</summary>
+
+The original README is reproduced below. Its installation instructions refer to the upstream project.
+
 [![AUR](https://img.shields.io/aur/version/gpth-bin?logo=arch-linux)](https://aur.archlinux.org/packages/gpth-bin)
 [![total Github Releases downloads](https://img.shields.io/github/downloads/TheLastGimbus/GooglePhotosTakeoutHelper/total?label=total%20downloads)](https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper/releases/)
 [![latest version downloads](https://img.shields.io/github/downloads/TheLastGimbus/GooglePhotosTakeoutHelper/latest/total?label=latest%20version%20downloads)](https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper/releases/latest)
@@ -136,3 +165,5 @@ Yeah, the whole thing got re-written in Dart, and now it's way more stable and f
 - [ ] GPS data: from JSON to Exif - ~~Thank you @DalenW 💖~~ still thank you, but it is now missing in the Dart version
 - [ ] Writing data from `.json`s back to `EXIF` data
 - [x] Some way to handle albums - THANK YOU @bitsondatadev 😘 🎉 💃
+
+</details>

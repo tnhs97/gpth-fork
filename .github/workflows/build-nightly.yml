@@ -1,5 +1,3 @@
-# This is quick action to build apk and share it with artifacts
-# It's for convenience and nightly-testing with people
 name: Build nightly
 
 on:
@@ -12,7 +10,7 @@ jobs:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Get exe name
         id: exe_name
         shell: bash
@@ -27,12 +25,15 @@ jobs:
             echo "Unknown OS: $RUNNER_OS"
             exit 69
           fi
-      - uses: dart-lang/setup-dart@v1
-      - run: dart pub get
       - name: Build exe
-        run: dart compile exe bin/gpth.dart -o ./${{ steps.exe_name.outputs.name }}
-      - name: Upload apk as artifact
-        uses: actions/upload-artifact@v3
+        shell: bash
+        run: |
+          cargo build --release --locked
+          suffix=""
+          if [ "$RUNNER_OS" == "Windows" ]; then suffix=".exe"; fi
+          cp "target/release/gpth$suffix" "./${{ steps.exe_name.outputs.name }}"
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
         with:
           name: gpth-nightly-${{ runner.os }}
           path: ./${{ steps.exe_name.outputs.name }}
