@@ -4,6 +4,9 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
+permissions:
+  contents: write
+
 jobs:
   make-release:
     runs-on: ubuntu-latest
@@ -19,13 +22,16 @@ jobs:
       #        id: tag_message
       #        run: echo "name=message=$(git tag -l --format='%(contents)' ${{ github.ref }})" >> $GITHUB_OUTPUT
       - name: Create GH-Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           body_path: ./body-file.txt
           fail_on_unmatched_files: true
 
   build:
     needs: make-release
+    env:
+      SIGN_WINDOWS: ${{ secrets.WINDOZA_CERT_BASE64 != '' && secrets.WINDOZA_CERT_PASSWORD != '' }}
+      PUBLISH_TO_AUR: ${{ secrets.AUR_SSH_PRIVATE_KEY != '' }}
     strategy:
       matrix:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
@@ -57,7 +63,7 @@ jobs:
           if [ "$RUNNER_OS" == "Windows" ]; then suffix=".exe"; fi
           cp "target/release/gpth$suffix" "./${{ steps.exe_name.outputs.name }}"
       - name: Code sign a windoza exe file
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && env.SIGN_WINDOWS == 'true'
         uses: dlemstra/code-sign-action@v1
         with:
           # Note: this is a self-signed certificate that i generated on my computer
@@ -67,17 +73,17 @@ jobs:
           password: ${{ secrets.WINDOZA_CERT_PASSWORD }}
           folder: '.'
       - name: Add files to GH-Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           # this supports globs :>
           files: ./gpth-*
           fail_on_unmatched_files: true
       # if linux, upload to aur
       - name: Generate PKGBUILD
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && env.PUBLISH_TO_AUR == 'true'
         run: ./scripts/gen-pkgbuild.bash ./${{ steps.exe_name.outputs.name }}
       - name: Upload to AUR
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && env.PUBLISH_TO_AUR == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@v2
         with:
           pkgname: gpth-bin
