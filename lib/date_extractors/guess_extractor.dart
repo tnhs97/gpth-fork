@@ -47,10 +47,12 @@ final _commonDatetimePatterns = [
 
 /// Guesses DateTime from [file]s name
 /// - for example Screenshot_20190919-053857.jpg - we can guess this 😎
+/// - or Unix epoch timestamps like IMG_1613298531209_...jpg or 1777645150292.jpg
 Future<DateTime?> guessExtractor(File file) async {
+  final filename = p.basename(file.path);
   for (final pat in _commonDatetimePatterns) {
     // extract date str with regex
-    final match = (pat.first as RegExp).firstMatch(p.basename(file.path));
+    final match = (pat.first as RegExp).firstMatch(filename);
     final dateStr = match?.group(0);
     if (dateStr == null) continue;
     // parse it with given pattern
@@ -62,5 +64,28 @@ Future<DateTime?> guessExtractor(File file) async {
     if (date == null) continue;
     return date; // success!
   }
+
+  // Check for 13-digit millisecond epoch timestamps (e.g. IMG_1613298531209_1613385958031.jpg, 1777645150292.jpg)
+  // Range: 946684800000 (2000-01-01) to 2524608000000 (2050-01-01)
+  final milliMatches =
+      RegExp(r'(?:^|[^\d])(1\d{12})(?:[^\d]|$)').allMatches(filename);
+  for (final m in milliMatches) {
+    final epoch = int.tryParse(m.group(1)!);
+    if (epoch != null && epoch >= 946684800000 && epoch <= 2524608000000) {
+      return DateTime.fromMillisecondsSinceEpoch(epoch);
+    }
+  }
+
+  // Check for 10-digit second epoch timestamps (e.g. 1613385958)
+  // Range: 946684800 (2000-01-01) to 2524608000 (2050-01-01)
+  final secMatches =
+      RegExp(r'(?:^|[^\d])(1\d{9})(?:[^\d]|$)').allMatches(filename);
+  for (final m in secMatches) {
+    final epoch = int.tryParse(m.group(1)!);
+    if (epoch != null && epoch >= 946684800 && epoch <= 2524608000) {
+      return DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
+    }
+  }
+
   return null; // none matched
 }

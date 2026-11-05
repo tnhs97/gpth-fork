@@ -13,7 +13,20 @@ Future<DateTime?> jsonExtractor(File file, {bool tryhard = false}) async {
   if (jsonFile == null) return null;
   try {
     final data = jsonDecode(await jsonFile.readAsString());
-    final epoch = int.parse(data['photoTakenTime']['timestamp'].toString());
+    final timeMap = data['photoTakenTime'] ?? data['creationTime'];
+    final epochStr = timeMap?['timestamp']?.toString();
+    if (epochStr == null) return null;
+    final epoch = int.parse(epochStr);
+    if (epoch == 0) {
+      final creationEpochStr = data['creationTime']?['timestamp']?.toString();
+      if (creationEpochStr != null) {
+        final cEpoch = int.parse(creationEpochStr);
+        if (cEpoch != 0) {
+          return DateTime.fromMillisecondsSinceEpoch(cEpoch * 1000);
+        }
+      }
+      return null;
+    }
     return DateTime.fromMillisecondsSinceEpoch(epoch * 1000);
   } on FormatException catch (_) {
     // this is when json is bad
@@ -32,25 +45,34 @@ Future<DateTime?> jsonExtractor(File file, {bool tryhard = false}) async {
 Future<File?> _jsonForFile(File file, {required bool tryhard}) async {
   final dir = Directory(p.dirname(file.path));
   var name = p.basename(file.path);
-  // will try all methods to strip name to find json
-  for (final method in [
-    // none
-    (String s) => s,
-    _shortenName,
-    // test: combining this with _shortenName?? which way around?
-    _bracketSwap,
-    _removeExtra,
-    _noExtension,
-    // use those two only with tryhard
-    // look at https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper/issues/175
-    // thanks @denouche for reporting this!
-    if (tryhard) ...[
-      _removeExtraRegex,
-      _removeDigit, // most files with '(digit)' have jsons, so it's last
-    ]
-  ]) {
-    final jsonFile = File(p.join(dir.path, '${method(name)}.json'));
-    if (await jsonFile.exists()) return jsonFile;
+  // Suffixes to try: Google Takeout uses .supplemental-metadata.json in newer exports,
+  // and .json in older ones
+  const suffixes = ['.supplemental-metadata.json', '.json'];
+  for (final suffix in suffixes) {
+    for (final method in [
+      // none
+      (String s) => s,
+      _shortenName,
+      // test: combining this with _shortenName?? which way around?
+      _bracketSwap,
+      _removeExtra,
+      _noExtension,
+      // also if file has no extension (e.g. motion photo video companion), try with .jpg and .mp4
+      if (p.extension(file.path).isEmpty) ...[
+        (String s) => '$s.jpg',
+        (String s) => '$s.mp4',
+      ],
+      // use those two only with tryhard
+      // look at https://github.com/TheLastGimbus/GooglePhotosTakeoutHelper/issues/175
+      // thanks @denouche for reporting this!
+      if (tryhard) ...[
+        _removeExtraRegex,
+        _removeDigit, // most files with '(digit)' have jsons, so it's last
+      ]
+    ]) {
+      final jsonFile = File(p.join(dir.path, '${method(name)}$suffix'));
+      if (await jsonFile.exists()) return jsonFile;
+    }
   }
   return null;
 }
