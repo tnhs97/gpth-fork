@@ -159,6 +159,43 @@ AQACEQMRAD8AIcgXf//Z""";
       for (final f in files) {
         expect((await guessExtractor(File(f.first))), DateTime.parse(f.last));
       }
+
+      // 13-digit millisecond Unix epoch timestamps
+      final epochMsFile = File('IMG_1613298531209_something.jpg');
+      expect(
+        (await guessExtractor(epochMsFile)),
+        DateTime.fromMillisecondsSinceEpoch(1613298531209),
+      );
+
+      // 10-digit second Unix epoch timestamps
+      final epochSecFile = File('1613385958.jpg');
+      expect(
+        (await guessExtractor(epochSecFile)),
+        DateTime.fromMillisecondsSinceEpoch(1613385958 * 1000),
+      );
+    });
+    test('supplemental-metadata.json sidecar and fallback', () async {
+      final suppImg = File(join(Directory.systemTemp.path, 'supp_test.jpg'));
+      final suppJson = File(join(Directory.systemTemp.path, 'supp_test.jpg.supplemental-metadata.json'));
+      try {
+        suppImg.writeAsBytesSync([1, 2, 3]);
+        suppJson.writeAsStringSync('{"creationTime": {"timestamp": "1613298531"}}');
+        final res = await jsonExtractor(suppImg);
+        expect(res?.millisecondsSinceEpoch, 1613298531 * 1000);
+      } finally {
+        if (suppImg.existsSync()) suppImg.deleteSync();
+        if (suppJson.existsSync()) suppJson.deleteSync();
+      }
+    });
+    test('corrupted exif does not throw RangeError', () async {
+      final corruptImg = File(join(Directory.systemTemp.path, 'corrupt.jpg'));
+      try {
+        corruptImg.writeAsBytesSync([0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x02]);
+        final res = await exifExtractor(corruptImg);
+        expect(res, isNull);
+      } finally {
+        if (corruptImg.existsSync()) corruptImg.deleteSync();
+      }
     });
   });
   test('Duplicate removal', () {
@@ -220,13 +257,27 @@ AQACEQMRAD8AIcgXf//Z""";
     test('getDiskFree()', () async {
       expect(await getDiskFree('.'), isNotNull);
     });
+    test('isPhotoOrVideo() with extensionless magic bytes', () {
+      final extLessMp4 = File(join(Directory.systemTemp.path, 'motion_photo_video'));
+      try {
+        // MP4 ftyp header
+        extLessMp4.writeAsBytesSync([
+          0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, // ...ftyp
+          0x6d, 0x70, 0x34, 0x32, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        expect(isPhotoOrVideo(extLessMp4), isTrue);
+        expect(resolveDestinationFilename(extLessMp4), 'motion_photo_video.mp4');
+      } finally {
+        if (extLessMp4.existsSync()) extLessMp4.deleteSync();
+      }
+    });
   });
   group('folder_classify', () {
     final dirs = [
       Directory('./Photos from 2025'),
       Directory('./Photos from 1969'),
       Directory('./Photos from vacation'),
-      Directory('/tmp/very-random-omg'),
+      Directory(join(Directory.systemTemp.path, 'very-random-omg')),
     ];
     setUpAll(() async {
       for (var d in dirs) {
@@ -267,7 +318,11 @@ AQACEQMRAD8AIcgXf//Z""";
           await output.list(recursive: true, followLinks: false).toSet();
       // 2 folders + media + 1 album-ed shortcut
       expect(outputted.length, 2 + media.length + 1);
-      expect(outputted.whereType<Link>().length, 1);
+      if (Platform.isWindows) {
+        expect(outputted.where((e) => e.path.endsWith('.lnk')).length, 1);
+      } else {
+        expect(outputted.whereType<Link>().length, 1);
+      }
       expect(
         outputted.whereType<Directory>().map((e) => basename(e.path)).toSet(),
         {'ALL_PHOTOS', 'Vacation'},
@@ -363,6 +418,51 @@ AQACEQMRAD8AIcgXf//Z""";
         outputted.whereType<Directory>().map((e) => basename(e.path)).toSet(),
         {'ALL_PHOTOS'},
       );
+    });
+    test('flat', () async {
+      await moveFiles(
+        media,
+        output,
+        copy: true,
+        divideToDates: true,
+        albumBehavior: 'nothing',
+        flat: true,
+      ).toList();
+      final outputted =
+          await output.list(recursive: true, followLinks: false).toSet();
+      expect(
+        outputted.whereType<Directory>().map((e) => basename(e.path)).toSet(),
+        {'ALL_PHOTOS'},
+      );
+    });
+    test('split-media', () async {
+      final sampleVideo = File(join(Directory.systemTemp.path, 'sample.mp4'));
+      sampleVideo.writeAsBytesSync([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]);
+      try {
+        final mixedMedia = [
+          Media({null: imgFile1}),
+          Media({null: sampleVideo}),
+        ];
+        await moveFiles(
+          mixedMedia,
+          output,
+          copy: true,
+          divideToDates: false,
+          albumBehavior: 'nothing',
+          splitMedia: true,
+        ).toList();
+        final outputted =
+            await output.list(recursive: true, followLinks: false).toSet();
+        final topDirs = outputted
+            .whereType<Directory>()
+            .map((e) => basename(e.path))
+            .toSet();
+        // Both ALL_PHOTOS and ALL_VIDEOS top-level dirs must exist
+        expect(topDirs.contains('ALL_PHOTOS'), isTrue);
+        expect(topDirs.contains('ALL_VIDEOS'), isTrue);
+      } finally {
+        if (sampleVideo.existsSync()) sampleVideo.deleteSync();
+      }
     });
     tearDown(() async => await output.delete(recursive: true));
   });

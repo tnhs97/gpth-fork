@@ -50,6 +50,14 @@ void main(List<String> arguments) async {
       defaultsTo: 'shortcut',
     )
     ..addFlag('divide-to-dates', help: 'Divide output to folders by year/month')
+    ..addFlag(
+      'flat',
+      help: 'Output all photos/videos directly into folder without year/month subfolders',
+    )
+    ..addFlag(
+      'split-media',
+      help: 'Divide output to ALL_PHOTOS and ALL_VIDEOS folders',
+    )
     ..addFlag('skip-extras', help: 'Skip extra images (like -edited etc)')
     ..addFlag(
       'guess-from-name',
@@ -370,6 +378,8 @@ void main(List<String> arguments) async {
     copy: args['copy'],
     divideToDates: args['divide-to-dates'],
     albumBehavior: args['albums'],
+    flat: args['flat'] ?? false,
+    splitMedia: args['split-media'] ?? false,
   ).listen((_) => barCopy.increment()).asFuture();
   print('');
 
