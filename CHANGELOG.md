@@ -1,3 +1,10 @@
+## 3.5.0
+
+- Rewrote Google Photos Takeout Helper in Rust. Cargo now builds and tests the tool.
+- Added support for supplemental metadata sidecars, timestamps in filenames, and extensionless motion videos.
+- Added `--flat` and `--split-media` to control the output layout.
+- Improved Windows album shortcuts and timestamps, deduplication of large files, and moves across drives.
+
 ## 3.4.3
 
 ### Just a few patches ❤️‍🩹
