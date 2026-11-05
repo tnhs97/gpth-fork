@@ -8,7 +8,7 @@ jobs:
   make-release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Get clean tag name
         id: clean_tag
         run: echo "tag=$(echo ${{ github.ref }} | sed 's/refs\/tags\///')" >> $GITHUB_OUTPUT
@@ -31,7 +31,7 @@ jobs:
         os: [ ubuntu-latest, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Get clean tag name
         id: clean_tag
         run: echo "tag=$(echo ${{ github.ref }} | sed 's/refs\/tags\///')" >> $GITHUB_OUTPUT
@@ -49,10 +49,13 @@ jobs:
             echo "Unknown OS: $RUNNER_OS"
             exit 69
           fi
-      - uses: dart-lang/setup-dart@v1
-      - run: dart pub get
       - name: Build exe
-        run: dart compile exe bin/gpth.dart -o ./${{ steps.exe_name.outputs.name }}
+        shell: bash
+        run: |
+          cargo build --release --locked
+          suffix=""
+          if [ "$RUNNER_OS" == "Windows" ]; then suffix=".exe"; fi
+          cp "target/release/gpth$suffix" "./${{ steps.exe_name.outputs.name }}"
       - name: Code sign a windoza exe file
         if: matrix.os == 'windows-latest'
         uses: dlemstra/code-sign-action@v1
