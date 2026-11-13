@@ -142,7 +142,12 @@ pub fn group(
 ) -> Result<GroupedMedia> {
     let mut sizes = HashMap::<u64, usize>::new();
     let mut sized = Vec::with_capacity(candidates.len());
+    let mut extras = 0;
     for (album, file) in candidates {
+        if skip_extras && is_extra(&file.path) {
+            extras += 1;
+            continue;
+        }
         let size = fs::metadata(&file.path)
             .with_context(|| format!("Reading {}", file.path.display()))?
             .len();
@@ -152,6 +157,7 @@ pub fn group(
 
     let mut indices = HashMap::new();
     let mut groups = Vec::<BTreeMap<_, MediaFile>>::new();
+    let mut best_dates = Vec::<Option<(dates::Accuracy, DateTime<Local>)>>::new();
     let mut duplicates = 0;
     for (size, album, file) in sized {
         let hash = if sizes[&size] == 1 {
@@ -165,8 +171,15 @@ pub fn group(
         };
         let index = *indices.entry((size, hash)).or_insert_with(|| {
             groups.push(BTreeMap::new());
+            best_dates.push(None);
             groups.len() - 1
         });
+        // A discarded duplicate may have the only sidecar or a more accurate date.
+        if let Some(date) = dates::extract(&file.path, !file.video, guess_from_name)
+            && best_dates[index].is_none_or(|existing| date.0 < existing.0)
+        {
+            best_dates[index] = Some(date);
+        }
         let files = &mut groups[index];
         if let Some(existing) = files.get_mut(&album) {
             duplicates += 1;
@@ -178,23 +191,14 @@ pub fn group(
         }
     }
 
-    let mut media = Vec::new();
-    let mut extras = 0;
-    for mut files in groups {
-        if skip_extras {
-            let count = files.len();
-            files.retain(|_, file| !is_extra(&file.path));
-            extras += count - files.len();
-        }
-        if !files.is_empty() {
-            let date = files
-                .values()
-                .filter_map(|file| dates::extract(&file.path, !file.video, guess_from_name))
-                .min_by_key(|(accuracy, _)| *accuracy)
-                .map(|(_, date)| date);
-            media.push(Media { files, date });
-        }
-    }
+    let media = groups
+        .into_iter()
+        .zip(best_dates)
+        .map(|(files, date)| Media {
+            files,
+            date: date.map(|(_, date)| date),
+        })
+        .collect();
     Ok(GroupedMedia {
         media,
         duplicates,
@@ -211,9 +215,11 @@ fn name_length(path: &Path) -> usize {
 }
 
 fn is_extra(path: &Path) -> bool {
+    static NUMBERED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:\([0-9]+\))+$").unwrap());
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     let normalized: String = stem.to_lowercase().nfc().collect();
+    let stem = NUMBERED.replace(&normalized, "");
     dates::EXTRA_SUFFIXES
         .iter()
-        .any(|suffix| normalized.ends_with(suffix))
+        .any(|suffix| stem.ends_with(suffix))
 }

@@ -30,6 +30,7 @@ pub enum Accuracy {
     Exif,
     Filename,
     ApproximateSidecar,
+    CreationTime,
 }
 
 pub fn extract(
@@ -37,7 +38,7 @@ pub fn extract(
     image: bool,
     guess_from_name: bool,
 ) -> Option<(Accuracy, DateTime<Local>)> {
-    sidecar_date(path, false)
+    sidecar_date(path, false, "photoTakenTime")
         .map(|date| (Accuracy::Sidecar, date))
         .or_else(|| {
             image
@@ -51,10 +52,18 @@ pub fn extract(
                 .flatten()
                 .map(|date| (Accuracy::Filename, date))
         })
-        .or_else(|| sidecar_date(path, true).map(|date| (Accuracy::ApproximateSidecar, date)))
+        .or_else(|| {
+            sidecar_date(path, true, "photoTakenTime")
+                .map(|date| (Accuracy::ApproximateSidecar, date))
+        })
+        .or_else(|| {
+            sidecar_date(path, false, "creationTime")
+                .or_else(|| sidecar_date(path, true, "creationTime"))
+                .map(|date| (Accuracy::CreationTime, date))
+        })
 }
 
-fn sidecar_date(path: &Path, approximate: bool) -> Option<DateTime<Local>> {
+fn sidecar_date(path: &Path, approximate: bool, key: &str) -> Option<DateTime<Local>> {
     static BRACKET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\([0-9]+\)\.").unwrap());
     static EXTRA: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"-[A-Za-zÀ-ÖØ-öø-ÿ]+(?:\([0-9]\))?\.[\w]+$").unwrap());
@@ -115,7 +124,7 @@ fn sidecar_date(path: &Path, approximate: bool) -> Option<DateTime<Local>> {
         for variant in &variants {
             if visited.insert((suffix, variant)) {
                 let candidate = path.with_file_name(format!("{variant}{suffix}"));
-                if let Some(date) = read_sidecar(&candidate) {
+                if let Some(date) = read_sidecar(&candidate, key) {
                     return Some(date);
                 }
             }
@@ -124,18 +133,14 @@ fn sidecar_date(path: &Path, approximate: bool) -> Option<DateTime<Local>> {
     None
 }
 
-fn read_sidecar(path: &Path) -> Option<DateTime<Local>> {
+fn read_sidecar(path: &Path, key: &str) -> Option<DateTime<Local>> {
     let data: Json = serde_json::from_reader(BufReader::new(File::open(path).ok()?)).ok()?;
-    ["photoTakenTime", "creationTime"]
-        .into_iter()
-        .find_map(|key| {
-            let value = &data[key]["timestamp"];
-            let epoch = value.as_i64().or_else(|| value.as_str()?.parse().ok())?;
-            if epoch == 0 {
-                return None;
-            }
-            DateTime::<Utc>::from_timestamp(epoch, 0).map(|date| date.with_timezone(&Local))
-        })
+    let value = &data[key]["timestamp"];
+    let epoch = value.as_i64().or_else(|| value.as_str()?.parse().ok())?;
+    if epoch == 0 {
+        return None;
+    }
+    DateTime::<Utc>::from_timestamp(epoch, 0).map(|date| date.with_timezone(&Local))
 }
 
 fn exif_date(path: &Path) -> Option<DateTime<Local>> {
@@ -146,7 +151,7 @@ fn exif_date(path: &Path) -> Option<DateTime<Local>> {
     }
     let mut input = BufReader::new(file);
     let data = Reader::new().read_from_container(&mut input).ok()?;
-    [Tag::DateTime, Tag::DateTimeOriginal, Tag::DateTimeDigitized]
+    [Tag::DateTimeOriginal, Tag::DateTimeDigitized, Tag::DateTime]
         .into_iter()
         .find_map(|tag| {
             let Value::Ascii(values) = &data.get_field(tag, In::PRIMARY)?.value else {
