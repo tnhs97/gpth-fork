@@ -349,3 +349,152 @@ fn moving_into_existing_output_uses_a_free_name() {
     );
     assert!(!takeout.year.join("sample.jpg").exists());
 }
+
+#[test]
+fn preserves_capture_dates_from_discarded_duplicates() {
+    let epoch = 1_577_836_800;
+    // Exercise both retaining the first file and replacing it with a shorter name.
+    for (retained, donor, upload_date) in [
+        ("a.jpg", "longer.jpg", false),
+        ("z.jpg", "a-long.jpg", false),
+        ("a.jpg", "longer.jpg", true),
+        ("z.jpg", "a-long.jpg", true),
+    ] {
+        let takeout = Takeout::new();
+        for name in [retained, donor] {
+            fs::write(takeout.year.join(name), b"identical photo").unwrap();
+        }
+        fs::write(
+            takeout.year.join(format!("{donor}.json")),
+            format!(r#"{{"photoTakenTime":{{"timestamp":"{epoch}"}}}}"#),
+        )
+        .unwrap();
+        // The shorter copy has only an upload date, which must not win.
+        if upload_date {
+            fs::write(
+                takeout.year.join(format!("{retained}.json")),
+                br#"{"creationTime":{"timestamp":"1704067200"}}"#,
+            )
+            .unwrap();
+        }
+        success(
+            takeout
+                .command()
+                .args(["--copy", "--divide-to-dates"])
+                .output()
+                .unwrap(),
+        );
+        let directory = Local
+            .timestamp_opt(epoch, 0)
+            .unwrap()
+            .format("%Y/%m")
+            .to_string();
+        let exported = takeout.output.join("ALL_PHOTOS").join(directory);
+        assert_eq!(fs::read_dir(&exported).unwrap().count(), 1);
+        assert_eq!(
+            modified(&exported.join(retained)),
+            UNIX_EPOCH + Duration::from_secs(epoch as u64)
+        );
+    }
+}
+
+#[test]
+fn creation_time_is_a_fallback_after_filename_capture_time() {
+    let root = tempdir().unwrap();
+    let image = root.path().join("IMG_20200101_120000.jpg");
+    fs::write(&image, b"photo").unwrap();
+    fs::write(
+        image.with_file_name("IMG_20200101_120000.jpg.json"),
+        br#"{"photoTakenTime":{"timestamp":"0"},"creationTime":{"timestamp":1704067200}}"#,
+    )
+    .unwrap();
+    let fix = || {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gpth"));
+        command.arg("--fix").arg(root.path());
+        command
+    };
+    success(fix().arg("--no-guess-from-name").output().unwrap());
+    assert_eq!(
+        modified(&image),
+        UNIX_EPOCH + Duration::from_secs(1_704_067_200)
+    );
+    success(fix().output().unwrap());
+    assert_eq!(
+        modified(&image),
+        SystemTime::from(Local.with_ymd_and_hms(2020, 1, 1, 12, 0, 0).unwrap())
+    );
+}
+
+#[test]
+fn original_exif_date_beats_modification_and_upload_dates() {
+    let root = tempdir().unwrap();
+    let image = root.path().join("photo.tiff");
+    // IFD0 holds DateTime and a pointer to an Exif IFD holding DateTimeOriginal.
+    let mut tiff = b"II".to_vec();
+    tiff.extend(42_u16.to_le_bytes());
+    tiff.extend(8_u32.to_le_bytes());
+    tiff.extend(2_u16.to_le_bytes());
+    for (tag, kind, count, offset) in [(0x132_u16, 2_u16, 20_u32, 38_u32), (0x8769, 4, 1, 58)] {
+        tiff.extend(tag.to_le_bytes());
+        tiff.extend(kind.to_le_bytes());
+        tiff.extend(count.to_le_bytes());
+        tiff.extend(offset.to_le_bytes());
+    }
+    tiff.extend(0_u32.to_le_bytes());
+    tiff.extend(b"2024:01:01 00:00:00\0");
+    tiff.extend(1_u16.to_le_bytes());
+    tiff.extend(0x9003_u16.to_le_bytes());
+    tiff.extend(2_u16.to_le_bytes());
+    tiff.extend(20_u32.to_le_bytes());
+    tiff.extend(76_u32.to_le_bytes());
+    tiff.extend(0_u32.to_le_bytes());
+    tiff.extend(b"2020:01:01 12:00:00\0");
+    fs::write(&image, tiff).unwrap();
+    for with_upload_date in [false, true] {
+        if with_upload_date {
+            fs::write(
+                root.path().join("photo.tiff.supplemental-metadata.json"),
+                br#"{"creationTime":{"timestamp":"1704067200"}}"#,
+            )
+            .unwrap();
+        }
+        success(
+            Command::new(env!("CARGO_BIN_EXE_gpth"))
+                .arg("--fix")
+                .arg(root.path())
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(
+            modified(&image),
+            SystemTime::from(Local.with_ymd_and_hms(2020, 1, 1, 12, 0, 0).unwrap())
+        );
+    }
+}
+
+#[test]
+fn skips_numbered_extras_before_deduplicating_originals() {
+    let takeout = Takeout::new();
+    let original = "photo-original-with-long-name.jpg";
+    fs::write(takeout.year.join(original), b"same photo").unwrap();
+    for extra in [
+        "a-edited(1).jpg",
+        "a-edited(12).jpg",
+        "a-edited(1)(2).jpg",
+        "a-編集済み(12).jpg",
+    ] {
+        fs::write(takeout.year.join(extra), b"same photo").unwrap();
+    }
+    fs::write(takeout.year.join("vacation(12).jpg"), b"another photo").unwrap();
+    success(
+        takeout
+            .command()
+            .args(["--copy", "--flat", "--skip-extras"])
+            .output()
+            .unwrap(),
+    );
+    let photos = takeout.output.join("ALL_PHOTOS");
+    assert_eq!(fs::read_dir(&photos).unwrap().count(), 2);
+    assert_eq!(fs::read(photos.join(original)).unwrap(), b"same photo");
+    assert!(photos.join("vacation(12).jpg").is_file());
+}
